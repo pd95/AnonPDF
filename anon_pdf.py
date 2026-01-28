@@ -1,4 +1,23 @@
 #!/usr/bin/env python3
+"""
+AnonPDF: in-place PDF text anonymization without rasterization.
+
+This CLI rewrites PDF content streams and replaces matching text with same-length
+characters. It preserves vector graphics and layout by modifying text operands
+inside page content streams and Form XObjects.
+
+Usage:
+  python anon_pdf.py <INPUT> [--output <FILE>] [<verbatim words...>] [--regex <patterns...>]
+
+Replacement behavior:
+  - fixed (default): repeat a single character, e.g. "Zürich" -> "xxxxxx"
+  - first-letter: repeat the first character of each match, e.g. "Zürich" -> "ZZZZZZ"
+
+Notes:
+  - Matches are applied to decoded text (via /ToUnicode or font encodings).
+  - Regex replacements are applied after verbatim word replacements.
+  - Matches do not cross text object boundaries or TJ array splits.
+"""
 import argparse
 import os
 import re
@@ -23,6 +42,8 @@ def _replacement_for_match(match_text: str, mode: str, fixed_char: str) -> str:
     else:
         repl_char = fixed_char
     return repl_char * len(match_text)
+
+
 def _regex_flags_from_string(flag_string: str) -> int:
     flags = 0
     for ch in flag_string:
@@ -432,7 +453,18 @@ def anonymize_pdf(
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Anonymize a PDF by replacing given strings with same-length characters."
+        description=(
+            "Rewrite PDF content streams to replace matching text with same-length characters."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  python anon_pdf.py fixtures/sample.pdf \"Zürich\"\n"
+            "  python anon_pdf.py fixtures/sample.pdf \"Zürich\" \"Öl\" --dry-run\n"
+            "  python anon_pdf.py fixtures/sample.pdf --regex \"naïve\" --regex-flags iu\n"
+            "  python anon_pdf.py fixtures/sample.pdf \"Zürich\" --replacement-char \"*\"\n"
+            "  python anon_pdf.py fixtures/sample.pdf \"Zürich\" --replacement-mode first-letter\n"
+        ),
     )
     parser.add_argument("input_pdf", help="Path to input PDF")
     parser.add_argument("--output", help="Output PDF path (defaults to overwrite input)")
