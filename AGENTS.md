@@ -34,6 +34,16 @@ Key flags:
 - Add cross-`TJ` matching with safe re-chunking.
 - Provide JSON output for `--dry-run`.
 
+## Testing
+Quick end-to-end verification:
+```
+python gen_fixtures.py
+python anon_pdf.py fixtures/sample.pdf "Zürich" --dry-run
+python anon_pdf.py fixtures/sample.pdf "Zürich" --output /tmp/anonpdf-check.pdf
+pdftotext /tmp/anonpdf-check.pdf - | sed -n '1,40p'
+```
+Expected: `Zürich` should appear as `xxxxxx` in the extracted text on both pages. Remove the temp file afterward.
+
 ## Environment notes
 - Requires `pypdf`. This is already installed in this environment.
 - Generated fixtures are in `AnonPDF/fixtures/`.
