@@ -85,4 +85,4 @@ This writes PDFs into `fixtures/`.
 
 ## License
 
-Internal tool; no license specified.
+MIT License.
