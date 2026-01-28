@@ -1,7 +1,7 @@
 # AGENTS
 
 ## Project summary
-AnonPDF rewrites PDF content streams to replace sensitive text with same-length `x` characters. It avoids rasterization and keeps vector content intact. Regex support and dry-run reporting are implemented.
+AnonPDF rewrites PDF content streams to replace sensitive text with same-length characters. It avoids rasterization and keeps vector content intact. Regex support and dry-run reporting are implemented.
 
 ## Files
 - `anon_pdf.py`: main CLI and logic.
@@ -15,6 +15,8 @@ python anon_pdf.py <INPUT> [--output <FILE>] [<verbatim words...>] [--regex <reg
 Key flags:
 - `--regex-flags` (default `iu`)
 - `--dry-run` (prints total and per-pattern counts)
+- `--replacement-char` (default `x`)
+- `--replacement-mode fixed|first-letter`
 
 ## How replacements work
 - Parse page content streams.

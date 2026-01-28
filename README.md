@@ -37,12 +37,24 @@ Custom regex flags:
 python anon_pdf.py fixtures/sample.pdf --regex "naïve" --regex-flags "iu"
 ```
 
+Custom replacement character:
+```
+python anon_pdf.py fixtures/sample.pdf "Zürich" --replacement-char "*"
+```
+
+Derive replacements from the first letter of each match:
+```
+python anon_pdf.py fixtures/sample.pdf "Zürich" --replacement-mode first-letter
+```
+
 ## Options
 
 - `--output <FILE>`: Output PDF path. Defaults to overwriting input.
 - `--regex <patterns...>`: Regex patterns (case-insensitive + Unicode-aware by default).
 - `--regex-flags <flags>`: Regex flags as letters: `i`, `m`, `s`, `u`. Default: `iu`.
 - `--dry-run`: Do not write output. Reports total and per-pattern counts.
+- `--replacement-char <char>`: Replacement character in fixed mode (default: `x`).
+- `--replacement-mode fixed|first-letter`: Choose fixed replacement or repeat the first character of each match.
 
 ## How it works
 
