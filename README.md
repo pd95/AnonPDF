@@ -2,10 +2,12 @@
 
 AnonPDF is a small CLI utility that replaces sensitive text inside PDF content streams without rasterizing pages. It rewrites text operators and keeps vector graphics intact.
 
-## Requirements
+## Installation
 
-This repo expects the following Python packages (already available in this environment):
-- pypdf
+```
+python -m pip install -r requirements.txt
+```
+Minimal runtime dependency is `pypdf`.
 
 ## Usage
 
@@ -14,6 +16,7 @@ python anon_pdf.py <INPUT> [--output <FILE>] [<verbatim words...>] [--regex <reg
 ```
 
 If `--output` is omitted, the input file is overwritten (safely, via temp file + replace).
+Replacement behavior can be customized with `--replacement-char` and `--replacement-mode`.
 
 ### Examples
 
@@ -78,7 +81,7 @@ Generate PDF fixtures for local testing:
 python gen_fixtures.py
 ```
 
-This writes PDFs into `AnonPDF/fixtures/`.
+This writes PDFs into `fixtures/`.
 
 ## License
 
