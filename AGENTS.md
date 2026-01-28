@@ -15,7 +15,6 @@ python anon_pdf.py <INPUT> [--output <FILE>] [<verbatim words...>] [--regex <reg
 Key flags:
 - `--regex-flags` (default `iu`)
 - `--dry-run` (prints total and per-pattern counts)
-- `--mode rewrite|overlay`
 
 ## How replacements work
 - Parse page content streams.
@@ -29,7 +28,6 @@ Key flags:
 - **Split text runs:** Matches don’t cross `TJ` array boundaries or separate text objects. A future enhancement could merge `TJ` arrays for matching and re-chunk with original spacing.
 - **Annotations / appearance streams:** Not processed. Many PDFs store visible text in `/AP` streams (e.g., form fields).
 - **Fonts without `/ToUnicode`:** Decoding/re-encoding may be incomplete; could add best-effort byte-level matching.
-- **Overlay mode:** Still supported but only for debugging; uses pdfplumber + reportlab.
 
 ## Suggested next steps
 - Add annotation appearance stream processing.
@@ -37,5 +35,5 @@ Key flags:
 - Provide JSON output for `--dry-run`.
 
 ## Environment notes
-- Requires `pypdf`, `pdfplumber`, `reportlab`. These are already installed in this environment.
+- Requires `pypdf`. This is already installed in this environment.
 - Generated fixtures are in `AnonPDF/fixtures/`.

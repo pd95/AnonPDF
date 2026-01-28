@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 import argparse
-import io
 import os
 import re
 import tempfile
-from typing import Iterable, List, Tuple
-
-import pdfplumber
+from typing import List, Tuple
 from pypdf import PdfReader, PdfWriter
 from pypdf._cmap import build_char_map_from_dict
 from pypdf.generic import (
@@ -16,88 +13,6 @@ from pypdf.generic import (
     ByteStringObject,
     IndirectObject,
 )
-from reportlab.pdfgen import canvas
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-
-
-def _pick_font() -> str:
-    # Prefer a Unicode-capable font if available.
-    candidates = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-    ]
-    for path in candidates:
-        if os.path.exists(path):
-            pdfmetrics.registerFont(TTFont("AnonSans", path))
-            return "AnonSans"
-    return "Helvetica"
-
-
-def _find_matches(chars: List[dict], needle: str) -> List[List[dict]]:
-    text = "".join(c.get("text", "") for c in chars)
-    matches = []
-    start = 0
-    nlen = len(needle)
-    if nlen == 0:
-        return matches
-    while True:
-        idx = text.find(needle, start)
-        if idx == -1:
-            break
-        matches.append(chars[idx : idx + nlen])
-        start = idx + nlen
-    return matches
-
-
-def _group_by_line(match_chars: List[dict], tol: float = 2.0) -> List[List[dict]]:
-    groups: List[List[dict]] = []
-    if not match_chars:
-        return groups
-    current = [match_chars[0]]
-    current_top = match_chars[0].get("top", 0.0)
-    for ch in match_chars[1:]:
-        top = ch.get("top", 0.0)
-        if abs(top - current_top) <= tol:
-            current.append(ch)
-        else:
-            groups.append(current)
-            current = [ch]
-            current_top = top
-    groups.append(current)
-    return groups
-
-
-def _group_bounds(group: List[dict]) -> Tuple[float, float, float, float, float, int]:
-    x0 = min(c.get("x0", 0.0) for c in group)
-    x1 = max(c.get("x1", 0.0) for c in group)
-    top = min(c.get("top", 0.0) for c in group)
-    bottom = max(c.get("bottom", 0.0) for c in group)
-    sizes = [c.get("size") for c in group if c.get("size") is not None]
-    size = float(sum(sizes) / len(sizes)) if sizes else max(1.0, bottom - top)
-    return x0, x1, top, bottom, size, len(group)
-
-
-def _draw_overlays(page_width: float, page_height: float, boxes: Iterable[Tuple[float, float, float, float, float, int]], font_name: str) -> bytes:
-    buf = io.BytesIO()
-    c = canvas.Canvas(buf, pagesize=(page_width, page_height))
-    for x0, x1, top, bottom, size, n_chars in boxes:
-        width = max(0.0, x1 - x0)
-        height = max(0.0, bottom - top)
-        y_bottom = page_height - bottom
-        # Cover original text.
-        c.setFillColorRGB(1, 1, 1)
-        c.rect(x0, y_bottom, width, height, stroke=0, fill=1)
-        # Draw replacement x's.
-        c.setFillColorRGB(0, 0, 0)
-        c.setFont(font_name, max(1.0, size))
-        text_y = y_bottom + max(0.0, (height - size) * 0.3)
-        c.drawString(x0, text_y, "x" * n_chars)
-    c.showPage()
-    c.save()
-    return buf.getvalue()
-
 def _regex_flags_from_string(flag_string: str) -> int:
     flags = 0
     for ch in flag_string:
@@ -401,51 +316,29 @@ def anonymize_pdf(
     output_path: str,
     words: List[str],
     regexes: List[str],
-    mode: str,
     regex_flags: int,
     dry_run: bool,
 ) -> tuple[List[int], List[int]]:
-    font_name = _pick_font()
     reader = PdfReader(input_path)
     writer = PdfWriter()
     word_counts = [0] * len(words)
     regex_counts = [0] * len(regexes)
 
-    if mode == "overlay":
-        with pdfplumber.open(input_path) as pdf:
-            for i, page in enumerate(pdf.pages):
-                page_width = float(page.width)
-                page_height = float(page.height)
-                chars = page.chars or []
-                boxes: List[Tuple[float, float, float, float, float, int]] = []
-                for needle in words:
-                    for match in _find_matches(chars, needle):
-                        for group in _group_by_line(match):
-                            boxes.append(_group_bounds(group))
-
-                overlay_pdf = _draw_overlays(page_width, page_height, boxes, font_name)
-                overlay_reader = PdfReader(io.BytesIO(overlay_pdf))
-                overlay_page = overlay_reader.pages[0]
-                base_page = reader.pages[i]
-                if boxes:
-                    base_page.merge_page(overlay_page)
-                writer.add_page(base_page)
-    else:
-        for i, base_page in enumerate(reader.pages):
-            # Page content stream
-            content, w_counts, r_counts = _process_content_stream(
-                base_page.get("/Contents"), reader, words, regexes, base_page.get("/Resources"), regex_flags
-            )
-            base_page[NameObject("/Contents")] = content
-            word_counts = [a + b for a, b in zip(word_counts, w_counts)]
-            regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
-            # XObject form streams (common for text)
-            w_counts, r_counts = _process_xobjects(
-                base_page.get("/Resources"), reader, words, regexes, visited=set(), regex_flags=regex_flags
-            )
-            word_counts = [a + b for a, b in zip(word_counts, w_counts)]
-            regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
-            writer.add_page(base_page)
+    for i, base_page in enumerate(reader.pages):
+        # Page content stream
+        content, w_counts, r_counts = _process_content_stream(
+            base_page.get("/Contents"), reader, words, regexes, base_page.get("/Resources"), regex_flags
+        )
+        base_page[NameObject("/Contents")] = content
+        word_counts = [a + b for a, b in zip(word_counts, w_counts)]
+        regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
+        # XObject form streams (common for text)
+        w_counts, r_counts = _process_xobjects(
+            base_page.get("/Resources"), reader, words, regexes, visited=set(), regex_flags=regex_flags
+        )
+        word_counts = [a + b for a, b in zip(word_counts, w_counts)]
+        regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
+        writer.add_page(base_page)
 
     if not dry_run:
         if os.path.abspath(output_path) == os.path.abspath(input_path):
@@ -483,18 +376,12 @@ def main() -> int:
         action="store_true",
         help="Process and report replacements, but do not write output",
     )
-    parser.add_argument(
-        "--mode",
-        choices=["rewrite", "overlay"],
-        default="rewrite",
-        help="rewrite = replace text in PDF content streams; overlay = visual overlay",
-    )
     args = parser.parse_args()
 
     output_path = args.output or args.input_pdf
     regex_flags = _regex_flags_from_string(args.regex_flags)
     word_counts, regex_counts = anonymize_pdf(
-        args.input_pdf, output_path, args.words, args.regex, args.mode, regex_flags, args.dry_run
+        args.input_pdf, output_path, args.words, args.regex, regex_flags, args.dry_run
     )
     if args.dry_run:
         total = sum(word_counts) + sum(regex_counts)

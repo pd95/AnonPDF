@@ -6,8 +6,6 @@ AnonPDF is a small CLI utility that replaces sensitive text inside PDF content s
 
 This repo expects the following Python packages (already available in this environment):
 - pypdf
-- pdfplumber (only used for overlay mode)
-- reportlab (only used for overlay mode)
 
 ## Usage
 
@@ -45,7 +43,6 @@ python anon_pdf.py fixtures/sample.pdf --regex "naïve" --regex-flags "iu"
 - `--regex <patterns...>`: Regex patterns (case-insensitive + Unicode-aware by default).
 - `--regex-flags <flags>`: Regex flags as letters: `i`, `m`, `s`, `u`. Default: `iu`.
 - `--dry-run`: Do not write output. Reports total and per-pattern counts.
-- `--mode`: `rewrite` (default) or `overlay` (debug/visual only).
 
 ## How it works
 
