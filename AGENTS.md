@@ -45,6 +45,9 @@ python gen_fixtures.py
 python anon_pdf.py fixtures/sample.pdf "Zürich" --dry-run
 python anon_pdf.py fixtures/sample.pdf "Zürich" --output /workdir/anonpdf-check.pdf
 pdftotext /workdir/anonpdf-check.pdf - | sed -n '1,40p'
+python anon_pdf.py fixtures/address_split.pdf "Zürich" --dry-run
+python anon_pdf.py fixtures/address_split.pdf "Zürich" --output /workdir/anonpdf-address-split.pdf
+pdftotext /workdir/anonpdf-address-split.pdf - | sed -n '1,20p'
 ```
 Expected: `Zürich` should appear as `xxxxxx` in the extracted text on both pages. Remove the temp file afterward.
 
