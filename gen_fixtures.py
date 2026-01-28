@@ -24,6 +24,31 @@ def write_dummy_png(path: Path) -> None:
     path.write_bytes(base64.b64decode(png_b64))
 
 
+def _draw_words(c, x: float, y: float, words: list[str], font_name: str, font_size: int) -> None:
+    cursor = x
+    space_w = pdfmetrics.stringWidth(" ", font_name, font_size)
+    for idx, word in enumerate(words):
+        c.drawString(cursor, y, word)
+        word_w = pdfmetrics.stringWidth(word, font_name, font_size)
+        cursor += word_w
+        if idx != len(words) - 1:
+            cursor += space_w
+
+
+def _draw_address_block(c, x: float, y: float, font_name: str = "DejaVuSans", font_size: int = 12) -> float:
+    c.setFont(font_name, font_size)
+    line_h = 14
+    _draw_words(c, x, y, ["Herr"], font_name, font_size)
+    y -= line_h
+    _draw_words(c, x, y, ["John", "Doe"], font_name, font_size)
+    y -= line_h
+    _draw_words(c, x, y, ["Hauptrasse", "67"], font_name, font_size)
+    y -= line_h
+    _draw_words(c, x, y, ["8001", "Zürich"], font_name, font_size)
+    y -= 24
+    return y
+
+
 def generate_pdf(path: Path) -> None:
     rl_config.defaultCompression = 0
     font_path = "/usr/share/fonts/dejavu/DejaVuSans.ttf"
@@ -43,6 +68,8 @@ def generate_pdf(path: Path) -> None:
     c.setFont("DejaVuSans", 12)
     c.drawString(72, y, UNICODE_SENTENCE)
     y -= 36
+
+    y = _draw_address_block(c, 72, y)
 
     rows, cols = 10, 4
     cell_w, cell_h = 100, 18
@@ -66,6 +93,7 @@ def generate_pdf(path: Path) -> None:
     c.drawString(72, height - 72, "Second page")
     c.setFont("DejaVuSans", 12)
     c.drawString(72, height - 96, UNICODE_SENTENCE)
+    _draw_address_block(c, 72, height - 130)
     c.save()
     with path.open("ab") as f:
         f.write(("\n% UNICODE: " + UNICODE_SENTENCE + "\n").encode("utf-8"))
@@ -74,6 +102,7 @@ def generate_pdf(path: Path) -> None:
 def main() -> None:
     FIXTURES.mkdir(parents=True, exist_ok=True)
     generate_pdf(FIXTURES / "sample.pdf")
+    generate_pdf(FIXTURES / "address_split.pdf")
     print("Fixtures generated in", FIXTURES)
 
 

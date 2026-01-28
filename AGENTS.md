@@ -17,6 +17,8 @@ Key flags:
 - `--dry-run` (prints total and per-pattern counts)
 - `--replacement-char` (default `x`)
 - `--replacement-mode fixed|first-letter`
+- `--match-across-operators` (default on) / `--no-match-across-operators`
+- `--match-joiner space|none`
 
 ## How replacements work
 - Parse page content streams.
@@ -27,13 +29,13 @@ Key flags:
 - Also processes Form XObjects.
 
 ## Known limitations / open points
-- **Split text runs:** Matches don’t cross `TJ` array boundaries or separate text objects. A future enhancement could merge `TJ` arrays for matching and re-chunk with original spacing.
+- **Split text runs:** Cross-operator matching is best-effort. It may miss cases with complex spacing or custom positioning, especially across distinct text blocks.
 - **Annotations / appearance streams:** Not processed. Many PDFs store visible text in `/AP` streams (e.g., form fields).
 - **Fonts without `/ToUnicode`:** Decoding/re-encoding may be incomplete; could add best-effort byte-level matching.
 
 ## Suggested next steps
 - Add annotation appearance stream processing.
-- Add cross-`TJ` matching with safe re-chunking.
+- Improve cross-operator matching with position-aware spacing or re-chunking.
 - Provide JSON output for `--dry-run`.
 
 ## Testing
@@ -41,8 +43,8 @@ Quick end-to-end verification:
 ```
 python gen_fixtures.py
 python anon_pdf.py fixtures/sample.pdf "Zürich" --dry-run
-python anon_pdf.py fixtures/sample.pdf "Zürich" --output /tmp/anonpdf-check.pdf
-pdftotext /tmp/anonpdf-check.pdf - | sed -n '1,40p'
+python anon_pdf.py fixtures/sample.pdf "Zürich" --output /workdir/anonpdf-check.pdf
+pdftotext /workdir/anonpdf-check.pdf - | sed -n '1,40p'
 ```
 Expected: `Zürich` should appear as `xxxxxx` in the extracted text on both pages. Remove the temp file afterward.
 

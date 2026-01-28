@@ -16,7 +16,7 @@ Replacement behavior:
 Notes:
   - Matches are applied to decoded text (via /ToUnicode or font encodings).
   - Regex replacements are applied after verbatim word replacements.
-  - Matches do not cross text object boundaries or TJ array splits.
+  - Matches cross adjacent text operands by default; disable with --no-match-across-operators.
 """
 import argparse
 import os
@@ -197,6 +197,8 @@ def _process_content_stream(
     regex_flags: int,
     replace_mode: str,
     replace_char: str,
+    match_across_operators: bool = False,
+    match_joiner: str = "space",
 ) -> tuple[ContentStream, List[int], List[int]]:
     content = ContentStream(stream_obj, reader)
     new_ops = []
@@ -204,6 +206,156 @@ def _process_content_stream(
     regex_counts = [0] * len(regexes)
     current_font = None
     font_cache: dict[str, tuple[object, dict, dict[str, bytes]]] = {}
+    if match_joiner == "space":
+        joiner = " "
+    else:
+        joiner = ""
+
+    def decode_item(item) -> tuple[str, callable] | None:
+        if current_font and resources:
+            font_dict = resources.get("/Font", {})
+            font_res = font_dict.get(current_font)
+            if font_res:
+                if current_font not in font_cache:
+                    font_cache[current_font] = _build_font_maps(font_res)
+                font_encoding, font_map, font_glyph_byte_map = font_cache[current_font]
+                if isinstance(item, TextStringObject):
+                    raw = str(item).encode("latin-1", "surrogatepass")
+                elif isinstance(item, ByteStringObject):
+                    raw = bytes(item)
+                else:
+                    return None
+                decoded = _decode_text_bytes(raw, font_encoding, font_map)
+
+                def encoder(new_text: str):
+                    new_raw = _encode_unicode(new_text, font_encoding, font_glyph_byte_map)
+                    return ByteStringObject(new_raw)
+
+                return decoded, encoder
+        if isinstance(item, TextStringObject):
+            return str(item), lambda s: TextStringObject(s)
+        if isinstance(item, ByteStringObject):
+            try:
+                text = bytes(item).decode("latin-1")
+            except Exception:
+                return None
+            return text, lambda s: ByteStringObject(s.encode("latin-1"))
+        return None
+
+    if match_across_operators:
+        segments: list[dict] = []
+        segment_runs: list[int] = []
+        run_id = 0
+        text_related_ops = {
+            "BT",
+            "ET",
+            "Tf",
+            "Tm",
+            "Td",
+            "TD",
+            "T*",
+            "Tc",
+            "Tw",
+            "Tz",
+            "TL",
+            "Ts",
+            "Tr",
+            "Tj",
+            "TJ",
+            "'",
+            '"',
+        }
+        last_font = None
+        for operands, operator in content.operations:
+            op = operator.decode("utf-8") if isinstance(operator, bytes) else operator
+            if op not in text_related_ops:
+                run_id += 1
+            if op == "Tf" and operands:
+                current_font = str(operands[0])
+            if op in ("Tj", "'", '"'):
+                if operands:
+                    decoded = decode_item(operands[0])
+                    if decoded:
+                        text, encoder = decoded
+                        segments.append(
+                            {
+                                "text": text,
+                                "set": lambda s, ops=operands, enc=encoder: ops.__setitem__(0, enc(s)),
+                                "font": current_font,
+                            }
+                        )
+                        if last_font is not None and current_font != last_font:
+                            run_id += 1
+                        segment_runs.append(run_id)
+                        last_font = current_font
+            elif op == "TJ":
+                if operands and hasattr(operands[0], "__iter__"):
+                    arr = operands[0]
+                    for idx, item in enumerate(arr):
+                        decoded = decode_item(item)
+                        if decoded:
+                            text, encoder = decoded
+                            segments.append(
+                                {
+                                    "text": text,
+                                    "set": lambda s, a=arr, i=idx, enc=encoder: a.__setitem__(i, enc(s)),
+                                    "font": current_font,
+                                }
+                            )
+                            if last_font is not None and current_font != last_font:
+                                run_id += 1
+                            segment_runs.append(run_id)
+                            last_font = current_font
+            new_ops.append((operands, operator))
+
+        # Run replacements across segments, grouped by run_id.
+        for run in sorted(set(segment_runs)):
+            run_indices = [i for i, r in enumerate(segment_runs) if r == run]
+            if not run_indices:
+                continue
+            run_segments = [segments[i] for i in run_indices if segments[i]["text"]]
+            if not run_segments:
+                continue
+            virtual_chars: list[str] = []
+            mapping: list[tuple[int, int] | None] = []
+            for si, seg in enumerate(run_segments):
+                for ci, ch in enumerate(seg["text"]):
+                    virtual_chars.append(ch)
+                    mapping.append((si, ci))
+                if joiner and si != len(run_segments) - 1:
+                    virtual_chars.append(joiner)
+                    mapping.append(None)
+            virtual_text = "".join(virtual_chars)
+            replaced, w_counts, r_counts = _replace_all(
+                virtual_text, words, regexes, regex_flags, replace_mode, replace_char
+            )
+            if replaced != virtual_text:
+                seg_chars = [list(seg["text"]) for seg in run_segments]
+                changed = set()
+                for idx, map_entry in enumerate(mapping):
+                    if map_entry is None:
+                        continue
+                    si, ci = map_entry
+                    new_ch = replaced[idx]
+                    if seg_chars[si][ci] != new_ch:
+                        seg_chars[si][ci] = new_ch
+                        changed.add(si)
+                for si in changed:
+                    run_segments[si]["set"]("".join(seg_chars[si]))
+                    run_segments[si]["text"] = "".join(seg_chars[si])
+                word_counts = [a + b for a, b in zip(word_counts, w_counts)]
+                regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
+        content.operations = new_ops
+        # Force serialization from operations.
+        content._data = b""
+        content._decoded_data = None
+        content._encoded_data = None
+        content._compress = None
+        content._filters = None
+        content._constants = None
+        content._resolved_objects = None
+        content._is_inline_image = False
+        return content, word_counts, regex_counts
     for operands, operator in content.operations:
         op = operator.decode("utf-8") if isinstance(operator, bytes) else operator
         if op == "Tf" and operands:
@@ -337,6 +489,8 @@ def _process_xobjects(
     regex_flags: int = 0,
     replace_mode: str = "fixed",
     replace_char: str = "x",
+    match_across_operators: bool = False,
+    match_joiner: str = "space",
 ) -> tuple[List[int], List[int]]:
     if resources is None:
         resources = parent_resources
@@ -372,6 +526,8 @@ def _process_xobjects(
                 regex_flags,
                 replace_mode,
                 replace_char,
+                match_across_operators,
+                match_joiner,
             )
             xobj.set_data(content.get_data())
             word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -387,6 +543,8 @@ def _process_xobjects(
                 regex_flags=regex_flags,
                 replace_mode=replace_mode,
                 replace_char=replace_char,
+                match_across_operators=match_across_operators,
+                match_joiner=match_joiner,
             )
             word_counts = [a + b for a, b in zip(word_counts, w_counts)]
             regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
@@ -402,6 +560,8 @@ def anonymize_pdf(
     dry_run: bool,
     replace_mode: str,
     replace_char: str,
+    match_across_operators: bool = False,
+    match_joiner: str = "space",
 ) -> tuple[List[int], List[int]]:
     reader = PdfReader(input_path)
     writer = PdfWriter()
@@ -419,6 +579,8 @@ def anonymize_pdf(
             regex_flags,
             replace_mode,
             replace_char,
+            match_across_operators,
+            match_joiner,
         )
         base_page[NameObject("/Contents")] = content
         word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -433,6 +595,8 @@ def anonymize_pdf(
             regex_flags=regex_flags,
             replace_mode=replace_mode,
             replace_char=replace_char,
+            match_across_operators=match_across_operators,
+            match_joiner=match_joiner,
         )
         word_counts = [a + b for a, b in zip(word_counts, w_counts)]
         regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
@@ -496,6 +660,24 @@ def main() -> int:
         default="fixed",
         help="fixed = repeat replacement char; first-letter = repeat first character of each match",
     )
+    parser.add_argument(
+        "--match-across-operators",
+        action="store_true",
+        default=True,
+        help="Match across adjacent text operators and text objects (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-match-across-operators",
+        dest="match_across_operators",
+        action="store_false",
+        help="Disable cross-operator matching (revert to per-operand matching)",
+    )
+    parser.add_argument(
+        "--match-joiner",
+        choices=["space", "none"],
+        default="space",
+        help="Virtual joiner between adjacent text operands when matching across operators",
+    )
     args = parser.parse_args()
     if args.replacement_mode == "fixed" and len(args.replacement_char) != 1:
         parser.error("--replacement-char must be a single character")
@@ -511,6 +693,8 @@ def main() -> int:
         args.dry_run,
         args.replacement_mode,
         args.replacement_char,
+        match_across_operators=args.match_across_operators,
+        match_joiner=args.match_joiner,
     )
     if args.dry_run:
         total = sum(word_counts) + sum(regex_counts)

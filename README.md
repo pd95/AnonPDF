@@ -58,6 +58,9 @@ python anon_pdf.py fixtures/sample.pdf "Zürich" --replacement-mode first-letter
 - `--dry-run`: Do not write output. Reports total and per-pattern counts.
 - `--replacement-char <char>`: Replacement character in fixed mode (default: `x`).
 - `--replacement-mode fixed|first-letter`: Choose fixed replacement or repeat the first character of each match.
+- `--match-across-operators`: Best-effort matching across adjacent text operators and text objects (default).
+- `--no-match-across-operators`: Disable cross-operator matching.
+- `--match-joiner space|none`: Virtual joiner between adjacent operands when matching across operators.
 
 ## How it works
 
@@ -69,7 +72,7 @@ python anon_pdf.py fixtures/sample.pdf "Zürich" --replacement-mode first-letter
 
 ## Limitations (PDF realities)
 
-- Matches only within a single text operand. If text is split across multiple `TJ` chunks or text objects, the current version may miss it.
+- By default, matches across adjacent text operands. Use `--no-match-across-operators` to restrict matching to a single operand.
 - If a font lacks a valid `/ToUnicode` map or uses a custom encoding without a reversible mapping, replacements may be incomplete.
 - Text that is outlined to vector paths or embedded as images cannot be replaced by this tool.
 - Annotation appearance streams are not yet processed.
