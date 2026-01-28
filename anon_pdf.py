@@ -21,10 +21,12 @@ Notes:
 import argparse
 import os
 import re
+import sys
 import tempfile
 from typing import List, Tuple
 from pypdf import PdfReader, PdfWriter
 from pypdf._cmap import build_char_map_from_dict
+from pypdf.errors import PdfReadError
 from pypdf.generic import (
     ContentStream,
     NameObject,
@@ -684,18 +686,24 @@ def main() -> int:
 
     output_path = args.output or args.input_pdf
     regex_flags = _regex_flags_from_string(args.regex_flags)
-    word_counts, regex_counts = anonymize_pdf(
-        args.input_pdf,
-        output_path,
-        args.words,
-        args.regex,
-        regex_flags,
-        args.dry_run,
-        args.replacement_mode,
-        args.replacement_char,
-        match_across_operators=args.match_across_operators,
-        match_joiner=args.match_joiner,
-    )
+    try:
+        word_counts, regex_counts = anonymize_pdf(
+            args.input_pdf,
+            output_path,
+            args.words,
+            args.regex,
+            regex_flags,
+            args.dry_run,
+            args.replacement_mode,
+            args.replacement_char,
+            match_across_operators=args.match_across_operators,
+            match_joiner=args.match_joiner,
+        )
+    except PdfReadError as exc:
+        print(f"Error: failed to read PDF ({exc}).", file=sys.stderr)
+        print("Hint: repair the PDF with qpdf, then rerun using the repaired file.", file=sys.stderr)
+        print(f'Example: qpdf --linearize "{args.input_pdf}" "repaired.pdf"', file=sys.stderr)
+        return 2
     if args.dry_run:
         total = sum(word_counts) + sum(regex_counts)
         print(f"Dry-run: {total} replacements would be made.")
