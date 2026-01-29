@@ -27,17 +27,17 @@ python anon_pdf.py fixtures/sample.pdf "Zürich" "Öl"
 
 Verbatim + regex (regex applied after verbatim):
 ```
-python anon_pdf.py fixtures/sample.pdf "Zürich" "Öl" --regex "naïve"
+python anon_pdf.py fixtures/sample.pdf "Zürich" "Öl" --regex "\+41 \d{2} \d{3} \d{2} \d{2}" "80\d\d Zürich"
 ```
 
 Dry-run with per-pattern counts:
 ```
-python anon_pdf.py fixtures/sample.pdf "Zürich" "Öl" --regex "naïve" --dry-run
+python anon_pdf.py fixtures/sample.pdf "Zürich" "Öl" --regex "\+41 \d{2} \d{3} \d{2} \d{2}" "80\d\d Zürich" --dry-run
 ```
 
 Custom regex flags:
 ```
-python anon_pdf.py fixtures/sample.pdf --regex "naïve" --regex-flags "iu"
+python anon_pdf.py fixtures/sample.pdf --regex "\+41 \d{2} \d{3} \d{2} \d{2}" "80\d\d Zürich" --regex-flags "iu"
 ```
 
 Custom replacement character:
@@ -53,7 +53,7 @@ python anon_pdf.py fixtures/sample.pdf "Zürich" --replacement-mode first-letter
 ## Options
 
 - `--output <FILE>`: Output PDF path. Defaults to overwriting input.
-- `--regex <patterns...>`: Regex patterns (case-insensitive + Unicode-aware by default).
+- `--regex <patterns...>`: Regex patterns (case-insensitive + Unicode-aware by default). Use a single `--regex` followed by one or more patterns (e.g., `--regex "pat1" "pat2"`). Repeating `--regex` is not supported and only the last occurrence is used.
 - `--regex-flags <flags>`: Regex flags as letters: `i`, `m`, `s`, `u`. Default: `iu`.
 - `--dry-run`: Do not write output. Reports total and per-pattern counts.
 - `--replacement-char <char>`: Replacement character in fixed mode (default: `x`).

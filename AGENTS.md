@@ -19,6 +19,12 @@ Key flags:
 - `--replacement-mode fixed|first-letter`
 - `--match-across-operators` (default on) / `--no-match-across-operators`
 - `--match-joiner space|none`
+Note: `--regex` accepts one or more patterns after a single flag (e.g., `--regex "pat1" "pat2"`). Repeating `--regex` is not supported and only the last occurrence is used.
+
+Example:
+```
+python anon_pdf.py fixtures/sample.pdf "Zürich" --regex "\+41 \d{2} \d{3} \d{2} \d{2}" "80\d\d Zürich"
+```
 
 ## How replacements work
 - Parse page content streams.
@@ -45,7 +51,7 @@ python gen_fixtures.py
 python anon_pdf.py fixtures/sample.pdf "Zürich" --dry-run
 python anon_pdf.py fixtures/sample.pdf "Zürich" --output /workdir/anonpdf-check.pdf
 pdftotext /workdir/anonpdf-check.pdf - | sed -n '1,40p'
-python anon_pdf.py fixtures/address_split.pdf "Zürich" --dry-run
+python anon_pdf.py fixtures/address_split.pdf "Zürich" --regex "naïve" "über" --dry-run
 python anon_pdf.py fixtures/address_split.pdf "Zürich" --output /workdir/anonpdf-address-split.pdf
 pdftotext /workdir/anonpdf-address-split.pdf - | sed -n '1,20p'
 ```

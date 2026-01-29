@@ -627,7 +627,7 @@ def main() -> int:
             "Examples:\n"
             "  python anon_pdf.py fixtures/sample.pdf \"Zürich\"\n"
             "  python anon_pdf.py fixtures/sample.pdf \"Zürich\" \"Öl\" --dry-run\n"
-            "  python anon_pdf.py fixtures/sample.pdf --regex \"naïve\" --regex-flags iu\n"
+            "  python anon_pdf.py fixtures/sample.pdf --regex \"\\\\+41 \\\\d{2} \\\\d{3} \\\\d{2} \\\\d{2}\" \"80\\\\d\\\\d Zürich\" --regex-flags iu\n"
             "  python anon_pdf.py fixtures/sample.pdf \"Zürich\" --replacement-char \"*\"\n"
             "  python anon_pdf.py fixtures/sample.pdf \"Zürich\" --replacement-mode first-letter\n"
         ),
