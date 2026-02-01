@@ -270,8 +270,9 @@ def _process_content_stream(
         last_font = None
         for operands, operator in content.operations:
             op = operator.decode("utf-8") if isinstance(operator, bytes) else operator
-            if op not in text_related_ops:
-                run_id += 1
+            if op == "BT" or op == "ET":
+                # Keep grouping across text objects; only reset font tracking.
+                last_font = None
             if op == "Tf" and operands:
                 current_font = str(operands[0])
             if op in ("Tj", "'", '"'):
@@ -325,6 +326,12 @@ def _process_content_stream(
                     virtual_chars.append(ch)
                     mapping.append((si, ci))
                 if joiner and si != len(run_segments) - 1:
+                    next_seg = run_segments[si + 1]["text"]
+                    # Avoid inserting a joiner around combining diacritics split into their own segment.
+                    if seg["text"] and "\u0300" <= seg["text"][-1] <= "\u036f":
+                        continue
+                    if next_seg and any("\u0300" <= ch <= "\u036f" for ch in next_seg):
+                        continue
                     virtual_chars.append(joiner)
                     mapping.append(None)
             virtual_text = "".join(virtual_chars)
