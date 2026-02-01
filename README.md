@@ -62,10 +62,13 @@ python anon_pdf.py Test-Dokumente/fake_invoice_en.pdf --regex "Zürich" --unicod
 - `--regex-flags <flags>`: Regex flags as letters: `i`, `m`, `s`, `u`. Default: `iu`.
 - `--dry-run`: Do not write output. Reports total and per-pattern counts.
 - `--replacement-char <char>`: Replacement character in fixed mode (default: `x`).
+- `--replacement-fallbacks [chars...]`: Fallback characters to try if the replacement char is not encodable (default: `x # * - .`).
 - `--replacement-mode fixed|first-letter`: Choose fixed replacement or repeat the first character of each match.
 - `--match-across-operators`: Best-effort matching across adjacent text operators and text objects (default).
 - `--no-match-across-operators`: Disable cross-operator matching.
 - `--match-joiner space|none`: Virtual joiner between adjacent operands when matching across operators.
+- `--normalize-whitespace`: Treat whitespace runs in verbatim words and regex patterns as flexible (default).
+- `--no-normalize-whitespace`: Disable whitespace normalization for verbatim words and regex patterns.
 - `--unicode-normalize none|nfc|nfd|nfkc|nfkd`: Normalize decoded text and patterns before matching (default: `nfd`).
 
 ### Unicode normalization notes

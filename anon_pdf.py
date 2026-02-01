@@ -61,6 +61,44 @@ def _regex_flags_from_string(flag_string: str) -> int:
     return flags
 
 
+def _normalize_regex_whitespace(pattern: str) -> str:
+    out = []
+    in_class = False
+    escaped = False
+    i = 0
+    while i < len(pattern):
+        ch = pattern[i]
+        if escaped:
+            out.append(ch)
+            escaped = False
+            i += 1
+            continue
+        if ch == "\\":
+            out.append(ch)
+            escaped = True
+            i += 1
+            continue
+        if ch == "[":
+            in_class = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "]" and in_class:
+            in_class = False
+            out.append(ch)
+            i += 1
+            continue
+        if not in_class and ch in " \t\n\r\f\v":
+            while i + 1 < len(pattern) and pattern[i + 1] in " \t\n\r\f\v":
+                i += 1
+            out.append(r"\s+")
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _replace_all(
     text: str,
     words: List[str],
@@ -69,6 +107,7 @@ def _replace_all(
     replace_mode: str,
     replace_char: str,
     unicode_normalize: str,
+    normalize_whitespace: bool,
 ) -> tuple[str, List[int], List[int]]:
     if unicode_normalize != "none":
         text = unicodedata.normalize(unicode_normalize, text)
@@ -78,18 +117,30 @@ def _replace_all(
     for idx_word, needle in enumerate(words):
         if not needle:
             continue
-        start = 0
-        while True:
-            idx = result.find(needle, start)
-            if idx == -1:
-                break
-            repl = _replacement_for_match(needle, replace_mode, replace_char)
-            result = result[:idx] + repl + result[idx + len(needle) :]
-            start = idx + len(repl)
-            word_counts[idx_word] += 1
+        if normalize_whitespace and re.search(r"\s", needle):
+            escaped = re.escape(needle)
+            whitespace_pattern = re.sub(r"(?:\\ |\\t|\\n|\\r|\\f|\\v)+", r"\\s+", escaped)
+            pattern = re.compile(whitespace_pattern, flags=regex_flags)
+            result, n = pattern.subn(
+                lambda m: _replacement_for_match(m.group(0), replace_mode, replace_char),
+                result,
+            )
+            word_counts[idx_word] += n
+        else:
+            start = 0
+            while True:
+                idx = result.find(needle, start)
+                if idx == -1:
+                    break
+                repl = _replacement_for_match(needle, replace_mode, replace_char)
+                result = result[:idx] + repl + result[idx + len(needle) :]
+                start = idx + len(repl)
+                word_counts[idx_word] += 1
     for idx_re, needle in enumerate(regexes):
         if not needle:
             continue
+        if normalize_whitespace:
+            needle = _normalize_regex_whitespace(needle)
         pattern = re.compile(needle, flags=regex_flags)
         result, n = pattern.subn(
             lambda m: _replacement_for_match(m.group(0), replace_mode, replace_char),
@@ -107,6 +158,7 @@ def _replace_in_text_operand(
     replace_mode: str,
     replace_char: str,
     unicode_normalize: str,
+    normalize_whitespace: bool,
 ):
     if isinstance(operand, TextStringObject):
         text = str(operand)
@@ -118,6 +170,7 @@ def _replace_in_text_operand(
             replace_mode,
             replace_char,
             unicode_normalize,
+            normalize_whitespace,
         )
         if replaced != text:
             return TextStringObject(replaced), w_counts, r_counts
@@ -137,6 +190,7 @@ def _replace_in_text_operand(
             replace_mode,
             replace_char,
             unicode_normalize,
+            normalize_whitespace,
         )
         if replaced != text:
             return ByteStringObject(replaced.encode("latin-1")), w_counts, r_counts
@@ -189,21 +243,64 @@ def _build_font_maps(font_resource) -> tuple[object, dict, dict[str, bytes]]:
     return font_encoding, font_map, font_glyph_byte_map
 
 
-def _encode_unicode(text: str, font_encoding, font_glyph_byte_map: dict[str, bytes]) -> bytes:
+def _compute_fallback_bytes(
+    font_glyph_byte_map: dict[str, bytes], replacement_fallbacks: List[str] | None
+) -> list[bytes]:
+    if not font_glyph_byte_map:
+        return []
+    if replacement_fallbacks:
+        for ch in replacement_fallbacks:
+            if ch in font_glyph_byte_map:
+                return [font_glyph_byte_map[ch]]
+    for ch, b in font_glyph_byte_map.items():
+        if not ch.isspace():
+            return [b]
+    return [next(iter(font_glyph_byte_map.values()))]
+
+
+def _encode_unicode(
+    text: str,
+    font_encoding,
+    font_glyph_byte_map: dict[str, bytes],
+    replacement_fallbacks: List[str] | None = None,
+    replacement_fallback_bytes: list[bytes] | None = None,
+) -> bytes:
     if isinstance(font_encoding, dict):
         rev = {v: bytes((k,)) for k, v in font_encoding.items()}
     else:
         rev = {}
     out = []
+    fallback_bytes: list[bytes] = []
+    if replacement_fallback_bytes:
+        fallback_bytes.extend(replacement_fallback_bytes)
+    if replacement_fallbacks:
+        for ch in replacement_fallbacks:
+            if ch in font_glyph_byte_map:
+                fallback_bytes.append(font_glyph_byte_map[ch])
+                break
     for ch in text:
         if ch in font_glyph_byte_map:
             out.append(font_glyph_byte_map[ch])
         elif isinstance(font_encoding, str):
-            out.append(ch.encode(font_encoding, "replace"))
+            if fallback_bytes and ch not in font_glyph_byte_map:
+                out.append(fallback_bytes[0])
+            else:
+                encoded = ch.encode(font_encoding, "replace")
+                if encoded == b"?" and fallback_bytes:
+                    out.append(fallback_bytes[0])
+                else:
+                    out.append(encoded)
         elif isinstance(font_encoding, dict):
-            out.append(rev.get(ch, b"?"))
+            out.append(rev.get(ch, fallback_bytes[0] if fallback_bytes else b"?"))
         else:
-            out.append(ch.encode("latin-1", "replace"))
+            if fallback_bytes and ch not in font_glyph_byte_map:
+                out.append(fallback_bytes[0])
+            else:
+                encoded = ch.encode("latin-1", "replace")
+                if encoded == b"?" and fallback_bytes:
+                    out.append(fallback_bytes[0])
+                else:
+                    out.append(encoded)
     return b"".join(out)
 
 
@@ -219,13 +316,15 @@ def _process_content_stream(
     match_across_operators: bool = False,
     match_joiner: str = "space",
     unicode_normalize: str = "none",
+    normalize_whitespace: bool = True,
+    replacement_fallbacks: List[str] | None = None,
 ) -> tuple[ContentStream, List[int], List[int]]:
     content = ContentStream(stream_obj, reader)
     new_ops = []
     word_counts = [0] * len(words)
     regex_counts = [0] * len(regexes)
     current_font = None
-    font_cache: dict[str, tuple[object, dict, dict[str, bytes]]] = {}
+    font_cache: dict[str, tuple[object, dict, dict[str, bytes], list[bytes]]] = {}
     if match_joiner == "space":
         joiner = " "
     else:
@@ -237,8 +336,19 @@ def _process_content_stream(
             font_res = font_dict.get(current_font)
             if font_res:
                 if current_font not in font_cache:
-                    font_cache[current_font] = _build_font_maps(font_res)
-                font_encoding, font_map, font_glyph_byte_map = font_cache[current_font]
+                    font_encoding, font_map, font_glyph_byte_map = _build_font_maps(font_res)
+                    fallback_bytes = _compute_fallback_bytes(
+                        font_glyph_byte_map, replacement_fallbacks
+                    )
+                    font_cache[current_font] = (
+                        font_encoding,
+                        font_map,
+                        font_glyph_byte_map,
+                        fallback_bytes,
+                    )
+                font_encoding, font_map, font_glyph_byte_map, fallback_bytes = font_cache[
+                    current_font
+                ]
                 if isinstance(item, TextStringObject):
                     raw = str(item).encode("latin-1", "surrogatepass")
                 elif isinstance(item, ByteStringObject):
@@ -246,9 +356,14 @@ def _process_content_stream(
                 else:
                     return None
                 decoded = _decode_text_bytes(raw, font_encoding, font_map)
-
                 def encoder(new_text: str):
-                    new_raw = _encode_unicode(new_text, font_encoding, font_glyph_byte_map)
+                    new_raw = _encode_unicode(
+                        new_text,
+                        font_encoding,
+                        font_glyph_byte_map,
+                        replacement_fallbacks,
+                        fallback_bytes,
+                    )
                     return ByteStringObject(new_raw)
 
                 return decoded, encoder
@@ -266,6 +381,8 @@ def _process_content_stream(
         segments: list[dict] = []
         segment_runs: list[int] = []
         run_id = 0
+        # Treat large negative TJ spacing adjustments (extra spacing) as word breaks.
+        tj_space_threshold = -250
         text_related_ops = {
             "BT",
             "ET",
@@ -303,6 +420,7 @@ def _process_content_stream(
                                 "text": text,
                                 "set": lambda s, ops=operands, enc=encoder: ops.__setitem__(0, enc(s)),
                                 "font": current_font,
+                                "gap_after": False,
                             }
                         )
                         if last_font is not None and current_font != last_font:
@@ -312,7 +430,12 @@ def _process_content_stream(
             elif op == "TJ":
                 if operands and hasattr(operands[0], "__iter__"):
                     arr = operands[0]
+                    last_seg_index: int | None = None
                     for idx, item in enumerate(arr):
+                        if isinstance(item, (int, float)):
+                            if last_seg_index is not None and item <= tj_space_threshold:
+                                segments[last_seg_index]["gap_after"] = True
+                            continue
                         decoded = decode_item(item)
                         if decoded:
                             text, encoder = decoded
@@ -321,8 +444,10 @@ def _process_content_stream(
                                     "text": text,
                                     "set": lambda s, a=arr, i=idx, enc=encoder: a.__setitem__(i, enc(s)),
                                     "font": current_font,
+                                    "gap_after": False,
                                 }
                             )
+                            last_seg_index = len(segments) - 1
                             if last_font is not None and current_font != last_font:
                                 run_id += 1
                             segment_runs.append(run_id)
@@ -350,8 +475,11 @@ def _process_content_stream(
                         continue
                     if next_seg and any("\u0300" <= ch <= "\u036f" for ch in next_seg):
                         continue
-                    virtual_chars.append(joiner)
-                    mapping.append(None)
+                    # Insert a joiner only when there's an explicit spacing gap.
+                    if seg.get("gap_after") and seg["text"] and not seg["text"][-1].isspace():
+                        if not next_seg or not next_seg[:1].isspace():
+                            virtual_chars.append(joiner)
+                            mapping.append(None)
             virtual_text = "".join(virtual_chars)
             replaced, w_counts, r_counts = _replace_all(
                 virtual_text,
@@ -361,6 +489,7 @@ def _process_content_stream(
                 replace_mode,
                 replace_char,
                 unicode_normalize,
+                normalize_whitespace,
             )
             if replaced != virtual_text:
                 seg_chars = [list(seg["text"]) for seg in run_segments]
@@ -400,8 +529,22 @@ def _process_content_stream(
                     font_res = font_dict.get(current_font)
                     if font_res:
                         if current_font not in font_cache:
-                            font_cache[current_font] = _build_font_maps(font_res)
-                        font_encoding, font_map, font_glyph_byte_map = font_cache[current_font]
+                            font_encoding, font_map, font_glyph_byte_map = _build_font_maps(font_res)
+                            fallback_bytes = _compute_fallback_bytes(
+                                font_glyph_byte_map, replacement_fallbacks
+                            )
+                            font_cache[current_font] = (
+                                font_encoding,
+                                font_map,
+                                font_glyph_byte_map,
+                                fallback_bytes,
+                            )
+                        (
+                            font_encoding,
+                            font_map,
+                            font_glyph_byte_map,
+                            fallback_bytes,
+                        ) = font_cache[current_font]
                         if isinstance(operands[0], TextStringObject):
                             raw = str(operands[0]).encode("latin-1", "surrogatepass")
                         elif isinstance(operands[0], ByteStringObject):
@@ -418,9 +561,16 @@ def _process_content_stream(
                                 replace_mode,
                                 replace_char,
                                 unicode_normalize,
+                                normalize_whitespace,
                             )
                             if replaced != decoded:
-                                new_raw = _encode_unicode(replaced, font_encoding, font_glyph_byte_map)
+                                new_raw = _encode_unicode(
+                                    replaced,
+                                    font_encoding,
+                                    font_glyph_byte_map,
+                                    replacement_fallbacks,
+                                    fallback_bytes,
+                                )
                                 operands[0] = ByteStringObject(new_raw)
                                 word_counts = [a + b for a, b in zip(word_counts, w_counts)]
                                 regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
@@ -433,6 +583,7 @@ def _process_content_stream(
                                 replace_mode,
                                 replace_char,
                                 unicode_normalize,
+                                normalize_whitespace,
                             )
                             operands[0] = new_val
                             word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -446,6 +597,7 @@ def _process_content_stream(
                             replace_mode,
                             replace_char,
                             unicode_normalize,
+                            normalize_whitespace,
                         )
                         operands[0] = new_val
                         word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -459,6 +611,7 @@ def _process_content_stream(
                         replace_mode,
                         replace_char,
                         unicode_normalize,
+                        normalize_whitespace,
                     )
                     operands[0] = new_val
                     word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -472,8 +625,22 @@ def _process_content_stream(
                         font_res = font_dict.get(current_font)
                         if font_res:
                             if current_font not in font_cache:
-                                font_cache[current_font] = _build_font_maps(font_res)
-                            font_encoding, font_map, font_glyph_byte_map = font_cache[current_font]
+                                font_encoding, font_map, font_glyph_byte_map = _build_font_maps(font_res)
+                                fallback_bytes = _compute_fallback_bytes(
+                                    font_glyph_byte_map, replacement_fallbacks
+                                )
+                                font_cache[current_font] = (
+                                    font_encoding,
+                                    font_map,
+                                    font_glyph_byte_map,
+                                    fallback_bytes,
+                                )
+                            (
+                                font_encoding,
+                                font_map,
+                                font_glyph_byte_map,
+                                fallback_bytes,
+                            ) = font_cache[current_font]
                             if isinstance(item, TextStringObject):
                                 raw = str(item).encode("latin-1", "surrogatepass")
                             elif isinstance(item, ByteStringObject):
@@ -490,9 +657,16 @@ def _process_content_stream(
                                     replace_mode,
                                     replace_char,
                                     unicode_normalize,
+                                    normalize_whitespace,
                                 )
                                 if replaced != decoded:
-                                    new_raw = _encode_unicode(replaced, font_encoding, font_glyph_byte_map)
+                                    new_raw = _encode_unicode(
+                                        replaced,
+                                        font_encoding,
+                                        font_glyph_byte_map,
+                                        replacement_fallbacks,
+                                        fallback_bytes,
+                                    )
                                     arr[idx] = ByteStringObject(new_raw)
                                     word_counts = [a + b for a, b in zip(word_counts, w_counts)]
                                     regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
@@ -507,6 +681,7 @@ def _process_content_stream(
                                     replace_mode,
                                     replace_char,
                                     unicode_normalize,
+                                    normalize_whitespace,
                                 )
                                 arr[idx] = new_val
                                 word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -520,6 +695,7 @@ def _process_content_stream(
                                 replace_mode,
                                 replace_char,
                                 unicode_normalize,
+                                normalize_whitespace,
                             )
                             arr[idx] = new_val
                             word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -533,6 +709,7 @@ def _process_content_stream(
                             replace_mode,
                             replace_char,
                             unicode_normalize,
+                            normalize_whitespace,
                         )
                         arr[idx] = new_val
                         word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -573,6 +750,8 @@ def _process_xobjects(
     match_across_operators: bool = False,
     match_joiner: str = "space",
     unicode_normalize: str = "none",
+    normalize_whitespace: bool = True,
+    replacement_fallbacks: List[str] | None = None,
 ) -> tuple[List[int], List[int]]:
     if resources is None:
         resources = parent_resources
@@ -611,6 +790,8 @@ def _process_xobjects(
                 match_across_operators,
                 match_joiner,
                 unicode_normalize,
+                normalize_whitespace,
+                replacement_fallbacks,
             )
             xobj.set_data(content.get_data())
             word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -629,6 +810,8 @@ def _process_xobjects(
                 match_across_operators=match_across_operators,
                 match_joiner=match_joiner,
                 unicode_normalize=unicode_normalize,
+                normalize_whitespace=normalize_whitespace,
+                replacement_fallbacks=replacement_fallbacks,
             )
             word_counts = [a + b for a, b in zip(word_counts, w_counts)]
             regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
@@ -647,6 +830,8 @@ def anonymize_pdf(
     match_across_operators: bool = False,
     match_joiner: str = "space",
     unicode_normalize: str = "none",
+    normalize_whitespace: bool = True,
+    replacement_fallbacks: List[str] | None = None,
 ) -> tuple[List[int], List[int]]:
     reader = PdfReader(input_path)
     writer = PdfWriter()
@@ -667,6 +852,8 @@ def anonymize_pdf(
             match_across_operators,
             match_joiner,
             unicode_normalize,
+            normalize_whitespace,
+            replacement_fallbacks,
         )
         base_page[NameObject("/Contents")] = content
         word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -684,6 +871,8 @@ def anonymize_pdf(
             match_across_operators=match_across_operators,
             match_joiner=match_joiner,
             unicode_normalize=unicode_normalize,
+            normalize_whitespace=normalize_whitespace,
+            replacement_fallbacks=replacement_fallbacks,
         )
         word_counts = [a + b for a, b in zip(word_counts, w_counts)]
         regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
@@ -748,6 +937,12 @@ def main() -> int:
         help="Single character used for replacements in fixed mode (default: x)",
     )
     parser.add_argument(
+        "--replacement-fallbacks",
+        nargs="*",
+        default=["x", "#", "*", "-", "."],
+        help="Fallback characters to try if replacement char is not encodable (default: x # * - .)",
+    )
+    parser.add_argument(
         "--replacement-mode",
         choices=["fixed", "first-letter"],
         default="fixed",
@@ -770,6 +965,18 @@ def main() -> int:
         choices=["space", "none"],
         default="space",
         help="Virtual joiner between adjacent text operands when matching across operators",
+    )
+    parser.add_argument(
+        "--normalize-whitespace",
+        action="store_true",
+        default=True,
+        help="Treat whitespace runs in verbatim words and regex patterns as flexible (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-normalize-whitespace",
+        dest="normalize_whitespace",
+        action="store_false",
+        help="Disable whitespace normalization for verbatim words and regex patterns",
     )
     args = parser.parse_args()
     if args.replacement_mode == "fixed" and len(args.replacement_char) != 1:
@@ -797,6 +1004,10 @@ def main() -> int:
             match_across_operators=args.match_across_operators,
             match_joiner=args.match_joiner,
             unicode_normalize=unicode_normalize,
+            normalize_whitespace=args.normalize_whitespace,
+            replacement_fallbacks=args.replacement_fallbacks
+            if args.replacement_mode == "fixed"
+            else None,
         )
     except PdfReadError as exc:
         print(f"Error: failed to read PDF ({exc}).", file=sys.stderr)
