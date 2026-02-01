@@ -168,6 +168,96 @@ def _replace_all(
     return result, word_counts, regex_counts
 
 
+def _normalize_with_mapping(text: str, form: str) -> tuple[str, list[int]]:
+    if form == "none":
+        return text, list(range(len(text)))
+    out_chars: list[str] = []
+    mapping: list[int] = []
+    for idx, ch in enumerate(text):
+        normalized = unicodedata.normalize(form, ch)
+        for n_ch in normalized:
+            out_chars.append(n_ch)
+            mapping.append(idx)
+    return "".join(out_chars), mapping
+
+
+def _replace_all_with_mapping(
+    text: str,
+    words: List[str],
+    regexes: List[str],
+    regex_flags: int,
+    replace_mode: str,
+    replace_char: str,
+    unicode_normalize: str,
+    normalize_whitespace: bool,
+) -> tuple[str, List[int], List[int]]:
+    if unicode_normalize == "none":
+        return _replace_all(
+            text,
+            words,
+            regexes,
+            regex_flags,
+            replace_mode,
+            replace_char,
+            unicode_normalize,
+            normalize_whitespace,
+        )
+    normalized_text, norm_to_orig = _normalize_with_mapping(text, unicode_normalize)
+    norm_chars = list(normalized_text)
+    orig_chars = list(text)
+    word_counts = [0] * len(words)
+    regex_counts = [0] * len(regexes)
+
+    def apply_match(start: int, end: int, match_text_norm: str) -> None:
+        if start >= end:
+            return
+        orig_start = norm_to_orig[start]
+        orig_end = norm_to_orig[end - 1] + 1
+        orig_slice = "".join(orig_chars[orig_start:orig_end])
+        repl_orig = _replacement_for_match(orig_slice, replace_mode, replace_char)
+        orig_chars[orig_start:orig_end] = list(repl_orig)
+        repl_norm = _replacement_for_match(match_text_norm, replace_mode, replace_char)
+        norm_chars[start:end] = list(repl_norm)
+
+    # Word replacements
+    for idx_word, needle in enumerate(words):
+        if not needle:
+            continue
+        if normalize_whitespace and re.search(r"\s", needle):
+            escaped = re.escape(needle)
+            whitespace_pattern = re.sub(r"(?:\\ |\\t|\\n|\\r|\\f|\\v)+", r"\\s+", escaped)
+            pattern = re.compile(whitespace_pattern, flags=regex_flags)
+            matches = list(pattern.finditer("".join(norm_chars)))
+            for match in matches:
+                apply_match(match.start(), match.end(), match.group(0))
+            word_counts[idx_word] += len(matches)
+        else:
+            start = 0
+            haystack = "".join(norm_chars)
+            while True:
+                idx = haystack.find(needle, start)
+                if idx == -1:
+                    break
+                apply_match(idx, idx + len(needle), haystack[idx : idx + len(needle)])
+                word_counts[idx_word] += 1
+                haystack = "".join(norm_chars)
+                start = idx + len(needle)
+
+    # Regex replacements
+    for idx_re, needle in enumerate(regexes):
+        if not needle:
+            continue
+        if normalize_whitespace:
+            needle = _normalize_regex_whitespace(needle)
+        pattern = re.compile(needle, flags=regex_flags)
+        matches = list(pattern.finditer("".join(norm_chars)))
+        for match in matches:
+            apply_match(match.start(), match.end(), match.group(0))
+        regex_counts[idx_re] += len(matches)
+
+    return "".join(orig_chars), word_counts, regex_counts
+
+
 def _replace_in_text_operand(
     operand,
     words: List[str],
@@ -499,7 +589,7 @@ def _process_content_stream(
                             virtual_chars.append(joiner)
                             mapping.append(None)
             virtual_text = "".join(virtual_chars)
-            replaced, w_counts, r_counts = _replace_all(
+            replaced, w_counts, r_counts = _replace_all_with_mapping(
                 virtual_text,
                 words,
                 regexes,
