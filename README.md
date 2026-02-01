@@ -50,6 +50,11 @@ Derive replacements from the first letter of each match:
 python anon_pdf.py fixtures/sample.pdf "Zürich" --replacement-mode first-letter
 ```
 
+Unicode normalization (helps when PDFs store decomposed glyphs like `u` + combining `¨`):
+```
+python anon_pdf.py Test-Dokumente/fake_invoice_en.pdf --regex "Zürich" --unicode-normalize nfd --dry-run
+```
+
 ## Options
 
 - `--output <FILE>`: Output PDF path. Defaults to overwriting input.
@@ -61,6 +66,16 @@ python anon_pdf.py fixtures/sample.pdf "Zürich" --replacement-mode first-letter
 - `--match-across-operators`: Best-effort matching across adjacent text operators and text objects (default).
 - `--no-match-across-operators`: Disable cross-operator matching.
 - `--match-joiner space|none`: Virtual joiner between adjacent operands when matching across operators.
+- `--unicode-normalize none|nfc|nfd|nfkc|nfkd`: Normalize decoded text and patterns before matching (default: `nfd`).
+
+### Unicode normalization notes
+
+Some PDFs store accents as separate combining marks (e.g., `u` + U+0308) rather than a single composed character (`ü`). In that case, matching `Zürich` can fail unless text is normalized. `--unicode-normalize` controls this:
+
+- `nfd`: decomposed form (base letter + combining mark). Best for matching decomposed PDFs.
+- `nfc`: composed form (single codepoint where possible).
+- `nfkc` / `nfkd`: compatibility normalization (may change characters more aggressively).
+- `none`: no normalization.
 
 ## How it works
 

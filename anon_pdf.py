@@ -23,6 +23,7 @@ import os
 import re
 import sys
 import tempfile
+import unicodedata
 from typing import List, Tuple
 from pypdf import PdfReader, PdfWriter
 from pypdf._cmap import build_char_map_from_dict
@@ -67,7 +68,10 @@ def _replace_all(
     regex_flags: int,
     replace_mode: str,
     replace_char: str,
+    unicode_normalize: str,
 ) -> tuple[str, List[int], List[int]]:
+    if unicode_normalize != "none":
+        text = unicodedata.normalize(unicode_normalize, text)
     result = text
     word_counts = [0] * len(words)
     regex_counts = [0] * len(regexes)
@@ -102,11 +106,18 @@ def _replace_in_text_operand(
     regex_flags: int,
     replace_mode: str,
     replace_char: str,
+    unicode_normalize: str,
 ):
     if isinstance(operand, TextStringObject):
         text = str(operand)
         replaced, w_counts, r_counts = _replace_all(
-            text, words, regexes, regex_flags, replace_mode, replace_char
+            text,
+            words,
+            regexes,
+            regex_flags,
+            replace_mode,
+            replace_char,
+            unicode_normalize,
         )
         if replaced != text:
             return TextStringObject(replaced), w_counts, r_counts
@@ -119,7 +130,13 @@ def _replace_in_text_operand(
         except Exception:
             return operand, [0] * len(words), [0] * len(regexes)
         replaced, w_counts, r_counts = _replace_all(
-            text, words, regexes, regex_flags, replace_mode, replace_char
+            text,
+            words,
+            regexes,
+            regex_flags,
+            replace_mode,
+            replace_char,
+            unicode_normalize,
         )
         if replaced != text:
             return ByteStringObject(replaced.encode("latin-1")), w_counts, r_counts
@@ -201,6 +218,7 @@ def _process_content_stream(
     replace_char: str,
     match_across_operators: bool = False,
     match_joiner: str = "space",
+    unicode_normalize: str = "none",
 ) -> tuple[ContentStream, List[int], List[int]]:
     content = ContentStream(stream_obj, reader)
     new_ops = []
@@ -336,7 +354,13 @@ def _process_content_stream(
                     mapping.append(None)
             virtual_text = "".join(virtual_chars)
             replaced, w_counts, r_counts = _replace_all(
-                virtual_text, words, regexes, regex_flags, replace_mode, replace_char
+                virtual_text,
+                words,
+                regexes,
+                regex_flags,
+                replace_mode,
+                replace_char,
+                unicode_normalize,
             )
             if replaced != virtual_text:
                 seg_chars = [list(seg["text"]) for seg in run_segments]
@@ -387,7 +411,13 @@ def _process_content_stream(
                         if raw is not None:
                             decoded = _decode_text_bytes(raw, font_encoding, font_map)
                             replaced, w_counts, r_counts = _replace_all(
-                                decoded, words, regexes, regex_flags, replace_mode, replace_char
+                                decoded,
+                                words,
+                                regexes,
+                                regex_flags,
+                                replace_mode,
+                                replace_char,
+                                unicode_normalize,
                             )
                             if replaced != decoded:
                                 new_raw = _encode_unicode(replaced, font_encoding, font_glyph_byte_map)
@@ -396,21 +426,39 @@ def _process_content_stream(
                                 regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
                         else:
                             new_val, w_counts, r_counts = _replace_in_text_operand(
-                                operands[0], words, regexes, regex_flags, replace_mode, replace_char
+                                operands[0],
+                                words,
+                                regexes,
+                                regex_flags,
+                                replace_mode,
+                                replace_char,
+                                unicode_normalize,
                             )
                             operands[0] = new_val
                             word_counts = [a + b for a, b in zip(word_counts, w_counts)]
                             regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
                     else:
                         new_val, w_counts, r_counts = _replace_in_text_operand(
-                            operands[0], words, regexes, regex_flags, replace_mode, replace_char
+                            operands[0],
+                            words,
+                            regexes,
+                            regex_flags,
+                            replace_mode,
+                            replace_char,
+                            unicode_normalize,
                         )
                         operands[0] = new_val
                         word_counts = [a + b for a, b in zip(word_counts, w_counts)]
                         regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
                 else:
                     new_val, w_counts, r_counts = _replace_in_text_operand(
-                        operands[0], words, regexes, regex_flags, replace_mode, replace_char
+                        operands[0],
+                        words,
+                        regexes,
+                        regex_flags,
+                        replace_mode,
+                        replace_char,
+                        unicode_normalize,
                     )
                     operands[0] = new_val
                     word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -435,7 +483,13 @@ def _process_content_stream(
                             if raw is not None:
                                 decoded = _decode_text_bytes(raw, font_encoding, font_map)
                                 replaced, w_counts, r_counts = _replace_all(
-                                    decoded, words, regexes, regex_flags, replace_mode, replace_char
+                                    decoded,
+                                    words,
+                                    regexes,
+                                    regex_flags,
+                                    replace_mode,
+                                    replace_char,
+                                    unicode_normalize,
                                 )
                                 if replaced != decoded:
                                     new_raw = _encode_unicode(replaced, font_encoding, font_glyph_byte_map)
@@ -446,21 +500,39 @@ def _process_content_stream(
                                     arr[idx] = item
                             else:
                                 new_val, w_counts, r_counts = _replace_in_text_operand(
-                                    item, words, regexes, regex_flags, replace_mode, replace_char
+                                    item,
+                                    words,
+                                    regexes,
+                                    regex_flags,
+                                    replace_mode,
+                                    replace_char,
+                                    unicode_normalize,
                                 )
                                 arr[idx] = new_val
                                 word_counts = [a + b for a, b in zip(word_counts, w_counts)]
                                 regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
                         else:
                             new_val, w_counts, r_counts = _replace_in_text_operand(
-                                item, words, regexes, regex_flags, replace_mode, replace_char
+                                item,
+                                words,
+                                regexes,
+                                regex_flags,
+                                replace_mode,
+                                replace_char,
+                                unicode_normalize,
                             )
                             arr[idx] = new_val
                             word_counts = [a + b for a, b in zip(word_counts, w_counts)]
                             regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
                     else:
                         new_val, w_counts, r_counts = _replace_in_text_operand(
-                            item, words, regexes, regex_flags, replace_mode, replace_char
+                            item,
+                            words,
+                            regexes,
+                            regex_flags,
+                            replace_mode,
+                            replace_char,
+                            unicode_normalize,
                         )
                         arr[idx] = new_val
                         word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -500,6 +572,7 @@ def _process_xobjects(
     replace_char: str = "x",
     match_across_operators: bool = False,
     match_joiner: str = "space",
+    unicode_normalize: str = "none",
 ) -> tuple[List[int], List[int]]:
     if resources is None:
         resources = parent_resources
@@ -537,6 +610,7 @@ def _process_xobjects(
                 replace_char,
                 match_across_operators,
                 match_joiner,
+                unicode_normalize,
             )
             xobj.set_data(content.get_data())
             word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -554,6 +628,7 @@ def _process_xobjects(
                 replace_char=replace_char,
                 match_across_operators=match_across_operators,
                 match_joiner=match_joiner,
+                unicode_normalize=unicode_normalize,
             )
             word_counts = [a + b for a, b in zip(word_counts, w_counts)]
             regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
@@ -571,6 +646,7 @@ def anonymize_pdf(
     replace_char: str,
     match_across_operators: bool = False,
     match_joiner: str = "space",
+    unicode_normalize: str = "none",
 ) -> tuple[List[int], List[int]]:
     reader = PdfReader(input_path)
     writer = PdfWriter()
@@ -590,6 +666,7 @@ def anonymize_pdf(
             replace_char,
             match_across_operators,
             match_joiner,
+            unicode_normalize,
         )
         base_page[NameObject("/Contents")] = content
         word_counts = [a + b for a, b in zip(word_counts, w_counts)]
@@ -606,6 +683,7 @@ def anonymize_pdf(
             replace_char=replace_char,
             match_across_operators=match_across_operators,
             match_joiner=match_joiner,
+            unicode_normalize=unicode_normalize,
         )
         word_counts = [a + b for a, b in zip(word_counts, w_counts)]
         regex_counts = [a + b for a, b in zip(regex_counts, r_counts)]
@@ -654,6 +732,12 @@ def main() -> int:
         help="Regex flags as letters: i, m, s, u (default: iu)",
     )
     parser.add_argument(
+        "--unicode-normalize",
+        choices=["none", "nfc", "nfd", "nfkc", "nfkd"],
+        default="nfd",
+        help="Normalize text/patterns before matching (default: nfd)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Process and report replacements, but do not write output",
@@ -693,18 +777,26 @@ def main() -> int:
 
     output_path = args.output or args.input_pdf
     regex_flags = _regex_flags_from_string(args.regex_flags)
+    words = args.words
+    regexes = args.regex
+    unicode_normalize = args.unicode_normalize
+    if unicode_normalize != "none":
+        unicode_normalize = unicode_normalize.upper()
+        words = [unicodedata.normalize(unicode_normalize, w) for w in words]
+        regexes = [unicodedata.normalize(unicode_normalize, r) for r in regexes]
     try:
         word_counts, regex_counts = anonymize_pdf(
             args.input_pdf,
             output_path,
-            args.words,
-            args.regex,
+            words,
+            regexes,
             regex_flags,
             args.dry_run,
             args.replacement_mode,
             args.replacement_char,
             match_across_operators=args.match_across_operators,
             match_joiner=args.match_joiner,
+            unicode_normalize=unicode_normalize,
         )
     except PdfReadError as exc:
         print(f"Error: failed to read PDF ({exc}).", file=sys.stderr)
