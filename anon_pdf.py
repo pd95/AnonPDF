@@ -10,13 +10,12 @@ Usage:
   python anon_pdf.py <INPUT> [--output <FILE>] [<verbatim words...>] [--regex <patterns...>]
 
 Replacement behavior:
-  - fixed (default): repeat a single character, e.g. "Zürich" -> "xxxxxx"
-  - first-letter: repeat the first character of each match, e.g. "Zürich" -> "ZZZZZZ"
+  - fixed: repeat a single character, e.g. "Zürich" -> "xxxxxx"
 
 Notes:
   - Matches are applied to decoded text (via /ToUnicode or font encodings).
   - Regex replacements are applied after verbatim word replacements.
-  - Matches cross adjacent text operands by default; disable with --no-match-across-operators.
+  - Matches cross adjacent text operands by default.
 """
 import argparse
 import os
@@ -35,6 +34,15 @@ from pypdf.generic import (
     ByteStringObject,
     IndirectObject,
 )
+
+DEFAULT_REGEX_FLAGS = "iu"
+DEFAULT_UNICODE_NORMALIZE = "NFD"
+DEFAULT_NORMALIZE_WHITESPACE = True
+DEFAULT_MATCH_ACROSS_OPERATORS = True
+DEFAULT_MATCH_JOINER = "space"
+DEFAULT_REPLACEMENT_MODE = "fixed"
+DEFAULT_REPLACEMENT_CHAR = "x"
+DEFAULT_REPLACEMENT_FALLBACKS = ["x", "#", "*", "-", "."]
 
 
 def _replacement_for_match(match_text: str, mode: str, fixed_char: str) -> str:
@@ -902,8 +910,6 @@ def main() -> int:
             "  python anon_pdf.py fixtures/sample.pdf \"Zürich\"\n"
             "  python anon_pdf.py fixtures/sample.pdf \"Zürich\" \"Öl\" --dry-run\n"
             "  python anon_pdf.py fixtures/sample.pdf --regex \"\\\\+41 \\\\d{2} \\\\d{3} \\\\d{2} \\\\d{2}\" \"80\\\\d\\\\d Zürich\" --regex-flags iu\n"
-            "  python anon_pdf.py fixtures/sample.pdf \"Zürich\" --replacement-char \"*\"\n"
-            "  python anon_pdf.py fixtures/sample.pdf \"Zürich\" --replacement-mode first-letter\n"
         ),
     )
     parser.add_argument("input_pdf", help="Path to input PDF")
@@ -917,80 +923,23 @@ def main() -> int:
     )
     parser.add_argument(
         "--regex-flags",
-        default="iu",
+        default=DEFAULT_REGEX_FLAGS,
         help="Regex flags as letters: i, m, s, u (default: iu)",
-    )
-    parser.add_argument(
-        "--unicode-normalize",
-        choices=["none", "nfc", "nfd", "nfkc", "nfkd"],
-        default="nfd",
-        help="Normalize text/patterns before matching (default: nfd)",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Process and report replacements, but do not write output",
     )
-    parser.add_argument(
-        "--replacement-char",
-        default="x",
-        help="Single character used for replacements in fixed mode (default: x)",
-    )
-    parser.add_argument(
-        "--replacement-fallbacks",
-        nargs="*",
-        default=["x", "#", "*", "-", "."],
-        help="Fallback characters to try if replacement char is not encodable (default: x # * - .)",
-    )
-    parser.add_argument(
-        "--replacement-mode",
-        choices=["fixed", "first-letter"],
-        default="fixed",
-        help="fixed = repeat replacement char; first-letter = repeat first character of each match",
-    )
-    parser.add_argument(
-        "--match-across-operators",
-        action="store_true",
-        default=True,
-        help="Match across adjacent text operators and text objects (default: enabled)",
-    )
-    parser.add_argument(
-        "--no-match-across-operators",
-        dest="match_across_operators",
-        action="store_false",
-        help="Disable cross-operator matching (revert to per-operand matching)",
-    )
-    parser.add_argument(
-        "--match-joiner",
-        choices=["space", "none"],
-        default="space",
-        help="Virtual joiner between adjacent text operands when matching across operators",
-    )
-    parser.add_argument(
-        "--normalize-whitespace",
-        action="store_true",
-        default=True,
-        help="Treat whitespace runs in verbatim words and regex patterns as flexible (default: enabled)",
-    )
-    parser.add_argument(
-        "--no-normalize-whitespace",
-        dest="normalize_whitespace",
-        action="store_false",
-        help="Disable whitespace normalization for verbatim words and regex patterns",
-    )
     args = parser.parse_args()
-    if args.replacement_mode == "fixed" and len(args.replacement_char) != 1:
-        parser.error("--replacement-char must be a single character")
 
     output_path = args.output or args.input_pdf
     regex_flags = _regex_flags_from_string(args.regex_flags)
     words = args.words
     regexes = args.regex
-    unicode_normalize = args.unicode_normalize
-    if unicode_normalize != "none":
-        unicode_normalize = unicode_normalize.upper()
-        words = [unicodedata.normalize(unicode_normalize, w) for w in words]
-        regexes = [unicodedata.normalize(unicode_normalize, r) for r in regexes]
+    unicode_normalize = DEFAULT_UNICODE_NORMALIZE
+    words = [unicodedata.normalize(unicode_normalize, w) for w in words]
+    regexes = [unicodedata.normalize(unicode_normalize, r) for r in regexes]
     try:
         word_counts, regex_counts = anonymize_pdf(
             args.input_pdf,
@@ -999,15 +948,13 @@ def main() -> int:
             regexes,
             regex_flags,
             args.dry_run,
-            args.replacement_mode,
-            args.replacement_char,
-            match_across_operators=args.match_across_operators,
-            match_joiner=args.match_joiner,
+            DEFAULT_REPLACEMENT_MODE,
+            DEFAULT_REPLACEMENT_CHAR,
+            match_across_operators=DEFAULT_MATCH_ACROSS_OPERATORS,
+            match_joiner=DEFAULT_MATCH_JOINER,
             unicode_normalize=unicode_normalize,
-            normalize_whitespace=args.normalize_whitespace,
-            replacement_fallbacks=args.replacement_fallbacks
-            if args.replacement_mode == "fixed"
-            else None,
+            normalize_whitespace=DEFAULT_NORMALIZE_WHITESPACE,
+            replacement_fallbacks=DEFAULT_REPLACEMENT_FALLBACKS,
         )
     except PdfReadError as exc:
         print(f"Error: failed to read PDF ({exc}).", file=sys.stderr)
