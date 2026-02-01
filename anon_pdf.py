@@ -69,6 +69,16 @@ def _regex_flags_from_string(flag_string: str) -> int:
     return flags
 
 
+def _validate_regexes(regexes: List[str], regex_flags: int) -> None:
+    for needle in regexes:
+        if not needle:
+            continue
+        try:
+            re.compile(needle, flags=regex_flags)
+        except re.error as exc:
+            raise ValueError(f'Invalid regex "{needle}": {exc}') from exc
+
+
 def _normalize_regex_whitespace(pattern: str) -> str:
     out = []
     in_class = False
@@ -940,6 +950,11 @@ def main() -> int:
     unicode_normalize = DEFAULT_UNICODE_NORMALIZE
     words = [unicodedata.normalize(unicode_normalize, w) for w in words]
     regexes = [unicodedata.normalize(unicode_normalize, r) for r in regexes]
+    try:
+        _validate_regexes(regexes, regex_flags)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
     try:
         word_counts, regex_counts = anonymize_pdf(
             args.input_pdf,
