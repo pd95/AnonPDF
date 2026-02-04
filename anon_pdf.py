@@ -1008,26 +1008,183 @@ def _resolve_pdf_object(obj):
         return obj
 
 
+def _resolve_nested(obj, _seen=None):
+    if _seen is None:
+        _seen = set()
+    obj = _resolve_pdf_object(obj)
+    obj_id = id(obj)
+    if obj_id in _seen:
+        return "<circular>"
+    _seen.add(obj_id)
+    if isinstance(obj, dict):
+        resolved = {}
+        for k, v in obj.items():
+            resolved[k] = _resolve_nested(v, _seen)
+        return resolved
+    if isinstance(obj, list):
+        return [_resolve_nested(v, _seen) for v in obj]
+    return obj
+
+
+def _strip_name_value_entries(obj):
+    if isinstance(obj, dict):
+        cleaned = {}
+        for k, v in obj.items():
+            v = _strip_name_value_entries(v)
+            if isinstance(v, str) and v.startswith("/"):
+                continue
+            cleaned[k] = v
+        return cleaned
+    if isinstance(obj, list):
+        return [_strip_name_value_entries(v) for v in obj]
+    return obj
+
+
+def _summarize_value(value, limit: int = 80) -> str:
+    text = str(value)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...(truncated)"
+
+
+_ANNOT_SENSITIVE_KEYS = {
+    "/Contents",
+    "/Subj",
+    "/T",
+    "/RC",
+}
+
+
+def _extract_sensitive_annotation_fields(annot_dict):
+    result = {}
+    for key, value in annot_dict.items():
+        if key in _ANNOT_SENSITIVE_KEYS:
+            if key == "/RC":
+                result[key] = _extract_rc_text(value)
+            else:
+                result[key] = value
+    return result
+
+
+def _extract_rc_text(value):
+    text = str(value or "")
+    if not text:
+        return text
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text or str(value)
+
+
+def _collect_stream_types(reader: PdfReader) -> dict[str, int]:
+    types: dict[str, int] = {}
+    seen = set()
+
+    def _walk(obj):
+        obj = _resolve_pdf_object(obj)
+        obj_id = id(obj)
+        if obj_id in seen:
+            return
+        seen.add(obj_id)
+        if isinstance(obj, dict):
+            if "/Length" in obj:
+                t = str(obj.get("/Type") or "/Stream")
+                st = obj.get("/Subtype")
+                key = f"{t} {st}" if st else t
+                types[key] = types.get(key, 0) + 1
+            for v in obj.values():
+                _walk(v)
+        elif isinstance(obj, list):
+            for v in obj:
+                _walk(v)
+
+    _walk(reader.trailer)
+    return types
+
+
+def _collect_names_from_nametree(node, names: list[str]) -> None:
+    node = _resolve_pdf_object(node)
+    if not isinstance(node, dict):
+        return
+    arr = node.get("/Names")
+    if arr:
+        arr = _resolve_pdf_object(arr)
+        if isinstance(arr, list):
+            for i in range(0, len(arr), 2):
+                try:
+                    names.append(str(arr[i]))
+                except Exception:
+                    continue
+    kids = node.get("/Kids")
+    if kids:
+        kids = _resolve_pdf_object(kids)
+        if isinstance(kids, list):
+            for kid in kids:
+                _collect_names_from_nametree(kid, names)
+
+
+def _collect_acroform_fields(field, prefix: str, out: list[tuple[str, str | None]]) -> None:
+    field = _resolve_pdf_object(field)
+    if not isinstance(field, dict):
+        return
+    name_part = field.get("/T")
+    name = prefix
+    if name_part:
+        name = f"{prefix}.{name_part}" if prefix else str(name_part)
+    value = field.get("/V") or field.get("/DV")
+    if name_part or value is not None:
+        out.append((name or "<unnamed>", _summarize_value(value) if value is not None else None))
+    kids = field.get("/Kids")
+    if kids:
+        kids = _resolve_pdf_object(kids)
+        if isinstance(kids, list):
+            for kid in kids:
+                _collect_acroform_fields(kid, name, out)
+
+
 def _warn_hidden_content(reader: PdfReader) -> None:
     warnings: List[str] = []
+    extra_streams: List[str] = []
     trailer = reader.trailer
     info = _resolve_pdf_object(trailer.get("/Info"))
     if info:
-        warnings.append(
-            "Document Info dictionary present (Title/Author/Subject/Keywords)."
-        )
+        fields = []
+        other_keys = 0
+        for key in ("/Author", "/Producer", "/Title", "/Subject"):
+            value = info.get(key)
+            if str(value or "").strip():
+                fields.append(f"{key}={_summarize_value(value)}")
+        for key, value in info.items():
+            if key in ("/Author", "/Producer", "/Title", "/Subject"):
+                continue
+            if str(value or "").strip():
+                other_keys += 1
+        if fields:
+            suffix = f" (+{other_keys} other keys)" if other_keys else ""
+            warnings.append("Document Info: " + ", ".join(fields) + suffix)
     if trailer.get("/Metadata"):
         warnings.append("XMP metadata stream present.")
+        extra_streams.append("/Metadata (XMP)")
     root = _resolve_pdf_object(trailer.get("/Root"))
     if root:
         if root.get("/AcroForm"):
-            warnings.append("AcroForm fields present (form values and appearances).")
+            warnings.append("AcroForm present (form values and appearances).")
+            acro = _resolve_pdf_object(root.get("/AcroForm"))
+            if isinstance(acro, dict) and acro.get("/XFA"):
+                extra_streams.append("/AcroForm /XFA")
         names = _resolve_pdf_object(root.get("/Names"))
         if names and _resolve_pdf_object(names.get("/EmbeddedFiles")):
-            warnings.append("Embedded files present.")
+            embedded = _resolve_pdf_object(names.get("/EmbeddedFiles"))
+            file_names: list[str] = []
+            _collect_names_from_nametree(embedded, file_names)
+            if file_names:
+                file_names = sorted(set(file_names))
+                warnings.append("Embedded files: " + ", ".join(file_names))
+            else:
+                warnings.append("Embedded files present.")
         if root.get("/StructTreeRoot"):
             warnings.append("Tagged PDF structure present (structure tree).")
     annots_count = 0
+    annot_dumps: List[str] = []
     for page in reader.pages:
         annots = _resolve_pdf_object(page.get("/Annots"))
         if annots:
@@ -1035,15 +1192,77 @@ def _warn_hidden_content(reader: PdfReader) -> None:
                 annots_count += len(annots)
             except Exception:
                 annots_count += 1
+            for annot in annots:
+                try:
+                    a = _resolve_pdf_object(annot)
+                except Exception:
+                    continue
+                try:
+                    cleaned = dict(a)
+                except Exception:
+                    annot_dumps.append(str(a))
+                    continue
+                cleaned.pop("/Border", None)
+                cleaned.pop("/Rect", None)
+                cleaned = _strip_name_value_entries(cleaned)
+                sensitive = _extract_sensitive_annotation_fields(cleaned)
+                if sensitive:
+                    for k, v in list(sensitive.items()):
+                        if isinstance(v, dict):
+                            sensitive[k] = {
+                                sk: _summarize_value(sv) for sk, sv in v.items()
+                            }
+                        else:
+                            sensitive[k] = _summarize_value(v)
+                    annot_dumps.append(str(sensitive))
+                else:
+                    annot_dumps.append("{}")
     if annots_count:
-        warnings.append(f"Annotations present ({annots_count}). Text may be in /AP.")
+        lines = [
+            f"Annotations present ({annots_count}). Text may be in /AP or link actions."
+        ]
+        for idx, dump in enumerate(annot_dumps, start=1):
+            lines.append(f"Annotation {idx}:")
+            if dump == "{}":
+                lines.append("  (no sensitive fields found)")
+                continue
+            if dump.startswith("{") and dump.endswith("}"):
+                body = dump[1:-1].strip()
+                if body:
+                    for part in body.split(", "):
+                        lines.append(f"  {part}")
+                else:
+                    lines.append("  (no sensitive fields found)")
+            else:
+                lines.append(f"  {dump}")
+        warnings.append("\n".join(lines))
+    if extra_streams:
+        warnings.append("Other streams not processed: " + ", ".join(extra_streams))
+    stream_types = _collect_stream_types(reader)
+    if stream_types:
+        handled = {
+            "/Stream",
+            "/XObject /Form",
+        }
+        extra = {k: v for k, v in stream_types.items() if k not in handled}
+        if extra:
+            lines = ["Other stream types detected:"]
+            for key in sorted(extra.keys()):
+                lines.append(f"  {key} ({extra[key]})")
+            warnings.append("\n".join(lines))
+
     if warnings:
         print(
             "Warning: PDF may contain sensitive text outside content streams:",
             file=sys.stderr,
         )
         for item in warnings:
-            print(f"  - {item}", file=sys.stderr)
+            lines = str(item).splitlines()
+            if not lines:
+                continue
+            print(f"  - {lines[0]}", file=sys.stderr)
+            for line in lines[1:]:
+                print(f"    {line}", file=sys.stderr)
 
 
 def main() -> int:

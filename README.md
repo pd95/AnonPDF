@@ -148,9 +148,11 @@ These steps generally rely on three capabilities:
 PDFs can contain sensitive text outside page content streams. `anon_pdf.py` now prints warnings if it detects:
 
 - Document metadata (`/Info` or XMP `/Metadata`).
-- Annotations or form fields (including appearance streams).
+- AcroForm fields (form values and appearance streams).
+- Annotations (e.g., `/Contents`, `/T`, `/Subj`).
 - Embedded files.
 - Tagged PDF structure trees.
+- Other stream types not processed by the tool.
 
 If the warning appears, you may need additional cleanup with dedicated tools or manual review.
 
