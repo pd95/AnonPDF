@@ -1065,7 +1065,7 @@ def main() -> int:
         print(f"Error: failed to read PDF ({exc}).", file=sys.stderr)
         print("Hint: repair the PDF with qpdf, then rerun using the repaired file.", file=sys.stderr)
         print(f'Example: qpdf --linearize "{args.input_pdf}" "repaired.pdf"', file=sys.stderr)
-        return 2
+        return 3
     if args.dry_run:
         total = sum(word_counts) + sum(regex_counts)
         print(f"Dry-run: {total} replacements would be made.")
