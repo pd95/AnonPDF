@@ -942,6 +942,8 @@ def anonymize_pdf(
     replacement_fallbacks: List[str] | None = None,
 ) -> tuple[List[int], List[int]]:
     reader = PdfReader(input_path)
+    if not dry_run:
+        _warn_hidden_content(reader)
     writer = PdfWriter()
     word_counts = [0] * len(words)
     regex_counts = [0] * len(regexes)
@@ -997,6 +999,51 @@ def anonymize_pdf(
             with open(output_path, "wb") as f:
                 writer.write(f)
     return word_counts, regex_counts
+
+
+def _resolve_pdf_object(obj):
+    try:
+        return obj.get_object()
+    except Exception:
+        return obj
+
+
+def _warn_hidden_content(reader: PdfReader) -> None:
+    warnings: List[str] = []
+    trailer = reader.trailer
+    info = _resolve_pdf_object(trailer.get("/Info"))
+    if info:
+        warnings.append(
+            "Document Info dictionary present (Title/Author/Subject/Keywords)."
+        )
+    if trailer.get("/Metadata"):
+        warnings.append("XMP metadata stream present.")
+    root = _resolve_pdf_object(trailer.get("/Root"))
+    if root:
+        if root.get("/AcroForm"):
+            warnings.append("AcroForm fields present (form values and appearances).")
+        names = _resolve_pdf_object(root.get("/Names"))
+        if names and _resolve_pdf_object(names.get("/EmbeddedFiles")):
+            warnings.append("Embedded files present.")
+        if root.get("/StructTreeRoot"):
+            warnings.append("Tagged PDF structure present (structure tree).")
+    annots_count = 0
+    for page in reader.pages:
+        annots = _resolve_pdf_object(page.get("/Annots"))
+        if annots:
+            try:
+                annots_count += len(annots)
+            except Exception:
+                annots_count += 1
+    if annots_count:
+        warnings.append(f"Annotations present ({annots_count}). Text may be in /AP.")
+    if warnings:
+        print(
+            "Warning: PDF may contain sensitive text outside content streams:",
+            file=sys.stderr,
+        )
+        for item in warnings:
+            print(f"  - {item}", file=sys.stderr)
 
 
 def main() -> int:

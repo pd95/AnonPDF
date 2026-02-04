@@ -143,6 +143,17 @@ These steps generally rely on three capabilities:
 - Always check the output PDF for missed terms; PDFs frequently split text in unexpected ways.
 - Prefer writing the redacted PDF next to the original with a `*-redacted.pdf`.
 
+### Metadata and hidden content
+
+PDFs can contain sensitive text outside page content streams. `anon_pdf.py` now prints warnings if it detects:
+
+- Document metadata (`/Info` or XMP `/Metadata`).
+- Annotations or form fields (including appearance streams).
+- Embedded files.
+- Tagged PDF structure trees.
+
+If the warning appears, you may need additional cleanup with dedicated tools or manual review.
+
 ## License
 
 MIT License.
