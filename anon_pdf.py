@@ -325,6 +325,16 @@ def _decode_text_bytes(raw: bytes, font_encoding, font_map: dict) -> str:
     return raw.decode("latin-1", "surrogatepass")
 
 
+def _text_string_original_bytes(item: TextStringObject) -> bytes:
+    try:
+        return bytes(item.original_bytes)
+    except Exception:
+        try:
+            return bytes(item.get_encoded_bytes())
+        except Exception:
+            return str(item).encode("latin-1", "surrogatepass")
+
+
 def _build_font_maps(font_resource) -> tuple[object, dict, dict[str, bytes]]:
     font_resource = font_resource.get_object() if isinstance(font_resource, IndirectObject) else font_resource
     _, _, font_encoding, font_map = build_char_map_from_dict(200, font_resource)
@@ -458,7 +468,7 @@ def _process_content_stream(
                     current_font
                 ]
                 if isinstance(item, TextStringObject):
-                    raw = str(item).encode("latin-1", "surrogatepass")
+                    raw = _text_string_original_bytes(item)
                 elif isinstance(item, ByteStringObject):
                     raw = bytes(item)
                 else:
@@ -654,7 +664,7 @@ def _process_content_stream(
                             fallback_bytes,
                         ) = font_cache[current_font]
                         if isinstance(operands[0], TextStringObject):
-                            raw = str(operands[0]).encode("latin-1", "surrogatepass")
+                            raw = _text_string_original_bytes(operands[0])
                         elif isinstance(operands[0], ByteStringObject):
                             raw = bytes(operands[0])
                         else:
@@ -750,7 +760,7 @@ def _process_content_stream(
                                 fallback_bytes,
                             ) = font_cache[current_font]
                             if isinstance(item, TextStringObject):
-                                raw = str(item).encode("latin-1", "surrogatepass")
+                                raw = _text_string_original_bytes(item)
                             elif isinstance(item, ByteStringObject):
                                 raw = bytes(item)
                             else:
