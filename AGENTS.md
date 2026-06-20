@@ -57,6 +57,13 @@ pdftotext /workdir/anonpdf-address-split.pdf - | sed -n '1,20p'
 ```
 Expected: `Zürich` should appear as `xxxxxx` in the extracted text on both pages. Remove the temp file afterward.
 
+## Git commits
+- Before committing, inspect `git status --short --branch` and review the staged or unstaged diff so only intended changes are included.
+- Run relevant verification first; for small Python changes, at minimum run `python -m py_compile anon_pdf.py` and `git diff --check`.
+- Keep generated files, temporary PDFs, and `__pycache__/` out of commits.
+- Write commit messages in the existing project style: a concise imperative subject, followed by a short body when useful.
+- Use the body to explain the problem and why the fix works, especially for PDF encoding, matching, or redaction behavior changes.
+
 ## Environment notes
 - Requires `pypdf`. This is already installed in this environment.
 - Generated fixtures are in `AnonPDF/fixtures/`.
